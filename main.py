@@ -6,17 +6,28 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from yt_dlp import YoutubeDL
 
-# Ensure yt-dlp is always updated
-subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], check=True)
-
-# Load environment variables from .env file
+# Load environment variables from .env file first
 load_dotenv()
-TOKEN = os.getenv("8502597211:AAFk0D5OwCaCc092QDUf_y4ZgputOmLHEY8")  # Read token from .env
+
+# Get token from environment variable
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Check if token is available
+if not TOKEN:
+    print("❌ ERROR: TELEGRAM_BOT_TOKEN not found in environment variables!")
+    print("Please create a .env file with: TELEGRAM_BOT_TOKEN=your_bot_token_here")
+    exit(1)
+
+print(f"✅ Bot token loaded successfully! Starting bot...")
 
 DOWNLOAD_FOLDER = './downloads'
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Store user choices temporarily
 user_choices = {}
@@ -72,7 +83,6 @@ async def handle_youtube_url(update: Update, context: ContextTypes.DEFAULT_TYPE)
             info_dict = ydl.extract_info(youtube_url, download=False)
             title = info_dict.get('title', 'Unknown Title')
             duration = info_dict.get('duration', 0)
-            thumbnail = info_dict.get('thumbnail', '')
         
         # Format duration
         minutes, seconds = divmod(duration, 60)
@@ -142,7 +152,8 @@ async def handle_quality_selection(update: Update, context: ContextTypes.DEFAULT
             await context.bot.send_video(
                 chat_id=chat_id,
                 video=open(file_path, 'rb'),
-                caption=f"✅ Download complete! 🎬"
+                caption=f"✅ Download complete! 🎬",
+                supports_streaming=True
             )
         
         # Clean up
@@ -173,13 +184,13 @@ async def download_media(url: str, quality: str, chat_id: int) -> str:
             }]
         },
         '360p': {
-            'format': 'best[height<=360]/best',
+            'format': 'best[height<=360]',
         },
         '720p': {
-            'format': 'best[height<=720]/best',
+            'format': 'best[height<=720]',
         },
         '1080p': {
-            'format': 'best[height<=1080]/best',
+            'format': 'best[height<=1080]',
         },
         'best': {
             'format': 'best',
@@ -189,8 +200,8 @@ async def download_media(url: str, quality: str, chat_id: int) -> str:
     ydl_opts = {
         'outtmpl': os.path.join(DOWNLOAD_FOLDER, '%(title).100s.%(ext)s'),
         'noplaylist': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-        'quiet': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'quiet': False,
     }
     
     # Merge quality-specific options
@@ -217,19 +228,25 @@ async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 def main() -> None:
-    application = ApplicationBuilder().token(TOKEN).build()
+    try:
+        application = ApplicationBuilder().token(TOKEN).build()
 
-    # Register handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r'(youtube\.com|youtu\.be)') & ~filters.COMMAND, 
-        handle_youtube_url
-    ))
-    application.add_handler(CallbackQueryHandler(handle_quality_selection, pattern="^quality_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown_message))
+        # Register handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(
+            filters.TEXT & filters.Regex(r'(youtube\.com|youtu\.be)') & ~filters.COMMAND, 
+            handle_youtube_url
+        ))
+        application.add_handler(CallbackQueryHandler(handle_quality_selection, pattern="^quality_"))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown_message))
 
-    # Start the Bot
-    application.run_polling()
+        print("🤖 Bot is starting...")
+        # Start the Bot
+        application.run_polling()
+        
+    except Exception as e:
+        logging.error(f"Failed to start bot: {e}")
+        print(f"❌ Bot failed to start: {e}")
 
 if __name__ == '__main__':
     main()
