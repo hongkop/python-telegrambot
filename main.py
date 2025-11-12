@@ -11,7 +11,7 @@ subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], check=True)
 
 # Load environment variables from .env file
 load_dotenv()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Read token from .env
+TOKEN = os.getenv("8502597211:AAEPOBAFjmiiolVI5fE-sXcZ3UUBtdhyLpY")  # Read token from .env
 
 DOWNLOAD_FOLDER = './downloads'
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
