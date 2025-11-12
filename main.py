@@ -2,6 +2,7 @@ import subprocess
 import os
 import logging
 import asyncio
+import re
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -28,16 +29,21 @@ logger = logging.getLogger(__name__)
 
 user_choices = {}
 
+def clean_filename(filename):
+    """Clean filename by removing special characters"""
+    # Remove special characters but keep Khmer unicode
+    cleaned = re.sub(r'[<>:"/\\|?*]', '', filename)
+    return cleaned[:100]  # Limit length
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         '🎵 **YouTube Downloader** 🎵\n\n'
         'Send YouTube link and choose quality:\n\n'
         '**Options:**\n'
-        '• 🎧 MP3 Audio (Fast & Recommended)\n'
-        '• 📱 360p Video\n' 
-        '• 💻 720p Video\n'
-        '• ⚡ Best Available Quality\n\n'
-        '✅ Fixed YouTube blocking issue',
+        '• 🎧 MP3 Audio (Fast & Stable)\n'
+        '• 📱 360p Video (Small size)\n' 
+        '• 💻 720p Video (Medium)\n\n'
+        '⚡ Auto-clean filenames for better compatibility',
         parse_mode='Markdown'
     )
 
@@ -49,7 +55,6 @@ def create_quality_keyboard():
         ],
         [
             InlineKeyboardButton("💻 720p", callback_data="quality_720p"),
-            InlineKeyboardButton("⚡ Best", callback_data="quality_best"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -65,11 +70,10 @@ async def handle_youtube_url(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         user_choices[chat_id] = {'url': youtube_url}
         
-        # Get video info with anti-bot measures
+        # Get video info
         ydl_opts = {
             'quiet': True,
-            'no_warnings': False,
-            'extract_flat': False,
+            'no_warnings': True,
         }
         
         with YoutubeDL(ydl_opts) as ydl:
@@ -86,7 +90,7 @@ async def handle_youtube_url(update: Update, context: ContextTypes.DEFAULT_TYPE)
             duration_str = f"{minutes}:{seconds:02d}"
         
         message = (
-            f"🎬 **{title}**\n"
+            f"🎬 **{clean_filename(title)}**\n"
             f"⏱️ Duration: {duration_str}\n\n"
             f"**Select quality:**"
         )
@@ -118,7 +122,6 @@ async def handle_quality_selection(update: Update, context: ContextTypes.DEFAULT
         'audio': '🎧 MP3 Audio',
         '360p': '📱 360p', 
         '720p': '💻 720p',
-        'best': '⚡ Best Quality'
     }
     
     await query.edit_message_text(
@@ -132,6 +135,23 @@ async def handle_quality_selection(update: Update, context: ContextTypes.DEFAULT
             timeout=300
         )
         
+        # Check file size before sending
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        logger.info(f"File size: {file_size_mb:.2f} MB")
+        
+        if file_size_mb > 50:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ File too large ({file_size_mb:.1f}MB). Telegram limit is 50MB. Try lower quality."
+            )
+            # Cleanup
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return
+        
+        # Send file
         if quality == 'audio':
             await context.bot.send_audio(
                 chat_id=chat_id,
@@ -143,7 +163,10 @@ async def handle_quality_selection(update: Update, context: ContextTypes.DEFAULT
                 chat_id=chat_id,
                 video=open(file_path, 'rb'),
                 caption="✅ Download complete! 🎬",
-                supports_streaming=True
+                supports_streaming=True,
+                read_timeout=60,
+                write_timeout=60,
+                connect_timeout=60
             )
         
         # Cleanup
@@ -159,14 +182,14 @@ async def handle_quality_selection(update: Update, context: ContextTypes.DEFAULT
             text="❌ Download timeout! Video too long."
         )
     except Exception as e:
-        logger.error(f"Download error: {e}")
+        logger.error(f"Send error: {e}")
         await context.bot.send_message(
             chat_id=chat_id,
-            text="❌ Download failed. YouTube is blocking this video. Try another video."
+            text=f"❌ Error sending file: {str(e)}"
         )
 
 async def download_media(url: str, quality: str, chat_id: int) -> str:
-    """Download media with anti-bot measures"""
+    """Download media with better file handling"""
     
     quality_map = {
         'audio': {
@@ -178,40 +201,32 @@ async def download_media(url: str, quality: str, chat_id: int) -> str:
             }]
         },
         '360p': {
-            'format': 'best[height<=360]',
+            'format': 'best[height<=360][filesize<50M]/best[height<=360]',
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mp4',
+            }]
         },
         '720p': {
-            'format': 'best[height<=720]',
+            'format': 'best[height<=720][filesize<50M]/best[height<=720]',
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor', 
+                'preferedformat': 'mp4',
+            }]
         },
-        'best': {
-            'format': 'best',
-        }
     }
     
-    # Anti-bot configuration
     ydl_opts = {
-        'outtmpl': os.path.join(DOWNLOAD_FOLDER, '%(title).80s.%(ext)s'),
+        'outtmpl': os.path.join(DOWNLOAD_FOLDER, '%(id)s.%(ext)s'),  # Use video ID instead of title
         'noplaylist': True,
         
-        # Anti-bot measures
+        # Better compatibility
+        'merge_output_format': 'mp4',
+        'prefer_ffmpeg': True,
+        
+        # Network settings
         'socket_timeout': 30,
-        'retries': 10,
-        'fragment_retries': 10,
-        'skip_unavailable_fragments': True,
-        'continue_dl': True,
-        
-        # Browser simulation
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'referer': 'https://www.youtube.com/',
-        'http_headers': {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate',
-        },
-        
-        # Throttle to avoid detection
-        'throttled_rate': 102400,  # 100 KB/s
-        'retry_sleep': 5,
+        'retries': 3,
         
         'quiet': False,
         'no_warnings': False,
@@ -252,7 +267,7 @@ def main() -> None:
         application.add_handler(CallbackQueryHandler(handle_quality_selection, pattern="^quality_"))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown_message))
 
-        print("🤖 Bot starting with anti-bot measures...")
+        print("🤖 Bot starting with file size limits...")
         application.run_polling()
         
     except Exception as e:
