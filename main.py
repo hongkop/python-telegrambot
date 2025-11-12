@@ -10,7 +10,7 @@ from yt_dlp import YoutubeDL
 load_dotenv()
 
 # Get token from environment variable
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN = os.getenv("8502597211:AAFk0D5OwCaCc092QDUf_y4ZgputOmLHEY8")
 
 # Check if token is available
 if not TOKEN:
